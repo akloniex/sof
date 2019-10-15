@@ -60,11 +60,12 @@ struct comp_buffer {
 	/* lists */
 	struct list_item source_list;	/* list in comp buffers */
 	struct list_item sink_list;	/* list in comp buffers */
+};
 
-	/* callbacks */
-	void (*cb)(void *data, uint32_t bytes);
-	void *cb_data;
-	int cb_type;
+struct buffer_cb_transact {
+	struct comp_buffer *buffer;
+	uint32_t transaction_amount;
+	void *transaction_begin_address;
 };
 
 #define buffer_comp_list(buffer, dir) \
