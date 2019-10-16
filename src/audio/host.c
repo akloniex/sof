@@ -14,6 +14,7 @@
 #include <sof/lib/alloc.h>
 #include <sof/lib/cache.h>
 #include <sof/lib/dma.h>
+#include <sof/lib/notifier.h>
 #include <sof/list.h>
 #include <sof/math/numbers.h>
 #include <sof/string.h>
@@ -222,9 +223,10 @@ static void host_one_shot_cb(struct comp_dev *dev, uint32_t bytes)
 /* This is called by DMA driver every time when DMA completes its current
  * transfer between host and DSP.
  */
-static void host_dma_cb(void *data, uint32_t type, struct dma_cb_data *next)
+static void host_dma_cb(void *arg, enum notify_id type, void *data)
 {
-	struct comp_dev *dev = (struct comp_dev *)data;
+	struct dma_cb_data *next = data;
+	struct comp_dev *dev = arg;
 	struct host_data *hd = comp_get_drvdata(dev);
 	uint32_t bytes = next->elem.size;
 
@@ -581,7 +583,7 @@ static int host_params(struct comp_dev *dev)
 	}
 
 	/* set up callback */
-	dma_set_cb(hd->chan, DMA_CB_TYPE_COPY, host_dma_cb, dev);
+	notifier_register(dev, hd->chan, NOTIFIER_ID_DMA_COPY, host_dma_cb);
 
 	/* set processing function */
 	if (dev->params.frame_fmt == SOF_IPC_FRAME_S16_LE)
