@@ -39,6 +39,7 @@ struct clk_data {
 
 struct clk_pdata {
 	struct clk_data clk[NUM_CLOCKS];
+	struct clock_notify_data clk_notify_data;
 };
 
 static struct clk_pdata *clk_pdata;
@@ -65,19 +66,17 @@ uint32_t clock_get_freq(int clock)
 
 void clock_set_freq(int clock, uint32_t hz)
 {
-	struct notify_data notify_data;
-	struct clock_notify_data clk_notify_data;
+	struct clock_notify_data *clk_notify_data = &clk_pdata->clk_notify_data;
+	enum notify_id notif_id;
+	uint32_t core_mask;
 	set_frequency set_freq = NULL;
 	const struct freq_table *freq_table = NULL;
 	uint32_t freq_table_size = 0;
 	uint32_t idx;
 	uint32_t flags;
 
-	notify_data.data_size = sizeof(clk_notify_data);
-	notify_data.data = &clk_notify_data;
-
-	clk_notify_data.old_freq = clk_pdata->clk[clock].freq;
-	clk_notify_data.old_ticks_per_msec =
+	clk_notify_data->old_freq = clk_pdata->clk[clock].freq;
+	clk_notify_data->old_ticks_per_msec =
 		clk_pdata->clk[clock].ticks_per_msec;
 
 	/* atomic context for changing clocks */
@@ -88,16 +87,15 @@ void clock_set_freq(int clock, uint32_t hz)
 		set_freq = &clock_platform_set_cpu_freq;
 		freq_table = cpu_freq;
 		freq_table_size = NUM_CPU_FREQ;
-		notify_data.id = NOTIFIER_ID_CPU_FREQ;
-		notify_data.target_core_mask =
-			NOTIFIER_TARGET_CORE_MASK(cpu_get_id());
+		notif_id = NOTIFIER_ID_CPU_FREQ;
+		core_mask = NOTIFIER_TARGET_CORE_MASK(cpu_get_id());
 		break;
 	case CLK_SSP:
 		set_freq = &clock_platform_set_ssp_freq;
 		freq_table = ssp_freq;
 		freq_table_size = NUM_SSP_FREQ;
-		notify_data.id = NOTIFIER_ID_SSP_FREQ;
-		notify_data.target_core_mask = NOTIFIER_TARGET_CORE_ALL_MASK;
+		notif_id = NOTIFIER_ID_SSP_FREQ;
+		core_mask = NOTIFIER_TARGET_CORE_ALL_MASK;
 		break;
 	default:
 		trace_clk_error("clk: invalid clock type %d", clock);
@@ -106,11 +104,13 @@ void clock_set_freq(int clock, uint32_t hz)
 
 	/* get nearest frequency that is >= requested Hz */
 	idx = clock_get_nearest_freq_idx(freq_table, freq_table_size, hz);
-	clk_notify_data.freq = freq_table[idx].freq;
+	clk_notify_data->freq = freq_table[idx].freq;
 
 	/* tell anyone interested we are about to change freq */
-	notify_data.message = CLOCK_NOTIFY_PRE;
-	notifier_event(&notify_data);
+	clk_pdata->clk_notify_data.message = CLOCK_NOTIFY_PRE;
+	notifier_event(&clk_pdata->clk[clock], notif_id, core_mask,
+		       &clk_pdata->clk_notify_data,
+		       sizeof(clk_pdata->clk_notify_data));
 
 	if (set_freq(freq_table[idx].enc) == 0) {
 		/* update clock frequency */
@@ -120,8 +120,10 @@ void clock_set_freq(int clock, uint32_t hz)
 	}
 
 	/* tell anyone interested we have now changed freq */
-	notify_data.message = CLOCK_NOTIFY_POST;
-	notifier_event(&notify_data);
+	clk_pdata->clk_notify_data.message = CLOCK_NOTIFY_POST;
+	notifier_event(&clk_pdata->clk[clock], notif_id, core_mask,
+		       &clk_pdata->clk_notify_data,
+		       sizeof(clk_pdata->clk_notify_data));
 
 out:
 	spin_unlock_irq(clk_pdata->clk[clock].lock, flags);
