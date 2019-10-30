@@ -14,6 +14,13 @@
 #include <sof/spinlock.h>
 #include <ipc/topology.h>
 
+#define trace_notifier(__e, ...) \
+	trace_event(TRACE_CLASS_NOTIFIER, __e, ##__VA_ARGS__)
+#define tracev_notifier(__e, ...) \
+	tracev_event(TRACE_CLASS_NOTIFIER, __e, ##__VA_ARGS__)
+#define trace_notifier_error(__e, ...) \
+	trace_error(TRACE_CLASS_NOTIFIER, __e, ##__VA_ARGS__)
+
 struct notify_data {
 	void *caller;
 	enum notify_id type;
@@ -37,13 +44,19 @@ int notifier_register(void *receiver, void *caller, enum notify_id type,
 	struct notify *notify = *arch_notify_get();
 	struct callback_handle *handle;
 
-	if (type >= NOTIFIER_ID_MAX)
+	if (type >= NOTIFIER_ID_MAX) {
+		trace_notifier_error("notifier_register() error: invalid ID to "
+				     "register to.");
 		return -EINVAL;
+	}
 
 	handle = rzalloc(RZONE_SYS_RUNTIME, SOF_MEM_CAPS_RAM, sizeof(*handle));
 
-	if (!handle)
+	if (!handle) {
+		trace_notifier_error("notifier_register() error: callback "
+				     "handle allocation failed.");
 		return -ENOMEM;
+	}
 
 	list_init(&handle->list);
 	handle->receiver = receiver;
@@ -64,8 +77,11 @@ void notifier_unregister(void *receiver, void *caller, enum notify_id type)
 	struct list_item *tlist;
 	struct callback_handle *handle;
 
-	if (type >= NOTIFIER_ID_MAX)
+	if (type >= NOTIFIER_ID_MAX) {
+		trace_notifier_error("notifier_unregister() error: invalid ID "
+				     "to unregister from.");
 		return;
+	}
 
 	/*
 	 * Unregister all matching callbacks
