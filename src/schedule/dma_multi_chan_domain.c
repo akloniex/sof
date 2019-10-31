@@ -10,6 +10,7 @@
 #include <sof/lib/alloc.h>
 #include <sof/lib/cpu.h>
 #include <sof/lib/dma.h>
+#include <sof/lib/notifier.h>
 #include <sof/schedule/ll_schedule.h>
 #include <sof/schedule/ll_schedule_domain.h>
 #include <sof/schedule/schedule.h>
@@ -250,9 +251,10 @@ static bool dma_multi_chan_domain_is_pending(struct ll_schedule_domain *domain,
 			if (dma_domain->data[i][j].task != task)
 				continue;
 
-			/* execute callback if exists */
-			if (dmas[i].chan[j].irq_callback)
-				dmas[i].chan[j].irq_callback(&dmas[i].chan[j]);
+			notifier_event(&dmas[i].chan[j], NOTIFIER_ID_DMA_IRQ,
+				       NOTIFIER_TARGET_CORE_LOCAL,
+				       &dmas[i].chan[j],
+				       sizeof(struct dma_chan_data));
 
 			/* clear interrupt */
 			dma_interrupt(&dmas[i].chan[j], DMA_IRQ_CLEAR);
