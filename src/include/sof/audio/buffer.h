@@ -193,7 +193,7 @@ static inline void buffer_reset_pos(struct comp_buffer *buffer, void *data)
 	buffer_lock(buffer, &flags);
 
 	/* reset rw pointers and avail/free bytes counters */
-	audio_stream_reset(&buffer->stream);
+	audio_stream_reset_unlocked(&buffer->stream);
 
 	/* clear buffer contents */
 	buffer_zero(buffer);
