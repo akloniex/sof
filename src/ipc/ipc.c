@@ -324,7 +324,7 @@ static int ipc_comp_to_buffer_connect(struct ipc_comp_dev *comp,
 	if (buffer->core != comp->core) {
 		dcache_invalidate_region(buffer->cb, sizeof(*buffer->cb));
 
-		buffer->cb->inter_core = true;
+		buffer->cb->stream.inter_core = true;
 
 		if (!comp->cd->is_shared) {
 			comp->cd = comp_make_shared(comp->cd);
@@ -359,7 +359,7 @@ static int ipc_buffer_to_comp_connect(struct ipc_comp_dev *buffer,
 	if (buffer->core != comp->core) {
 		dcache_invalidate_region(buffer->cb, sizeof(*buffer->cb));
 
-		buffer->cb->inter_core = true;
+		buffer->cb->stream.inter_core = true;
 
 		if (!comp->cd->is_shared) {
 			comp->cd = comp_make_shared(comp->cd);

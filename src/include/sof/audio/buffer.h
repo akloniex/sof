@@ -17,7 +17,6 @@
 #include <sof/lib/cache.h>
 #include <sof/list.h>
 #include <sof/math/numbers.h>
-#include <sof/spinlock.h>
 #include <sof/string.h>
 #include <sof/trace/trace.h>
 #include <ipc/stream.h>
@@ -67,8 +66,6 @@ struct comp_dev;
 
 /* audio component buffer - connects 2 audio components together in pipeline */
 struct comp_buffer {
-	spinlock_t *lock;		/* locking mechanism */
-
 	/* data buffer */
 	struct audio_stream stream;
 
@@ -77,7 +74,6 @@ struct comp_buffer {
 	uint32_t pipeline_id;
 	uint32_t caps;
 	uint32_t core;
-	bool inter_core; /* true if connected to a comp from another core */
 
 	/* connected components */
 	struct comp_dev *source;	/* source component */
@@ -147,17 +143,11 @@ void comp_update_buffer_consume(struct comp_buffer *buffer, uint32_t bytes);
 
 static inline void buffer_invalidate(struct comp_buffer *buffer, uint32_t bytes)
 {
-	if (!buffer->inter_core)
-		return;
-
 	audio_stream_invalidate(&buffer->stream, bytes);
 }
 
 static inline void buffer_writeback(struct comp_buffer *buffer, uint32_t bytes)
 {
-	if (!buffer->inter_core)
-		return;
-
 	audio_stream_writeback(&buffer->stream, bytes);
 }
 
@@ -170,13 +160,7 @@ static inline void buffer_writeback(struct comp_buffer *buffer, uint32_t bytes)
  */
 static inline void buffer_lock(struct comp_buffer *buffer, uint32_t *flags)
 {
-	if (!buffer->inter_core)
-		return;
-
-	spin_lock_irq(buffer->lock, *flags);
-
-	/* invalidate in case something has changed during our wait */
-	dcache_invalidate_region(buffer, sizeof(*buffer));
+	audio_stream_lock(&buffer->stream, flags);
 }
 
 /**
@@ -189,16 +173,7 @@ static inline void buffer_lock(struct comp_buffer *buffer, uint32_t *flags)
  */
 static inline void buffer_unlock(struct comp_buffer *buffer, uint32_t flags)
 {
-	if (!buffer->inter_core)
-		return;
-
-	/* save lock pointer to avoid memory access after cache flushing */
-	spinlock_t *lock = buffer->lock;
-
-	/* wtb and inv to avoid buffer locking in read only situations */
-	dcache_writeback_invalidate_region(buffer, sizeof(*buffer));
-
-	spin_unlock_irq(lock, flags);
+	audio_stream_unlock(&buffer->stream, flags);
 }
 
 static inline void buffer_zero(struct comp_buffer *buffer)

@@ -19,6 +19,7 @@
 #include <sof/math/numbers.h>
 #include <sof/lib/alloc.h>
 #include <sof/lib/cache.h>
+#include <sof/spinlock.h>
 #include <ipc/stream.h>
 #include <config.h>
 #include <stdbool.h>
@@ -43,6 +44,8 @@
  * series of reads/writes).
  */
 struct audio_stream {
+	spinlock_t *lock;		/* locking mechanism */
+
 	/* runtime data */
 	uint32_t size;	/**< Runtime buffer size in bytes (period multiple) */
 	uint32_t avail;	/**< Available bytes for reading */
@@ -57,6 +60,7 @@ struct audio_stream {
 	uint32_t rate;		/**< Number of data frames per second [Hz] */
 	uint16_t channels;	/**< Number of samples in each frame */
 
+	bool inter_core; /* true if connected to a comp from another core */
 	bool overrun_permitted; /**< indicates whether overrun is permitted */
 	bool underrun_permitted; /**< indicates whether underrun is permitted */
 };
@@ -159,6 +163,48 @@ struct audio_stream {
  */
 #define audio_stream_get_frag(buffer, ptr, idx, sample_size) \
 	audio_stream_wrap(buffer, (char *)(ptr) + ((idx) * (sample_size)))
+
+ /**
+  * Locks audio stream instance for buffers connecting components
+  * running on different cores. Stream parameters will be invalidated
+  * to make sure the latest data can be retrieved.
+  * @param stream Audio Stream instance.
+  * @param flags IRQ flags.
+  */
+static inline void audio_stream_lock(struct audio_stream *stream,
+				     uint32_t *flags)
+{
+	if (!stream->inter_core)
+		return;
+
+	spin_lock_irq(stream->lock, *flags);
+
+	/* invalidate in case something has changed during our wait */
+	dcache_invalidate_region(stream, sizeof(*stream));
+}
+
+/**
+ * Unlocks audio stream instance for buffers connecting components
+ * running on different cores. Stream parameters will be flushed
+ * to make sure all the changes are saved. Also they will be invalidated
+ * to spare the need of locking/unlocking stream, when only reading parameters.
+ * @param stream Audio stream instance.
+ * @param flags IRQ flags.
+ */
+static inline void audio_stream_unlock(struct audio_stream *stream,
+				       uint32_t flags)
+{
+	if (!stream->inter_core)
+		return;
+
+	/* save lock pointer to avoid memory access after cache flushing */
+	spinlock_t *lock = stream->lock;
+
+	/* wtb and inv to avoid buffer locking in read only situations */
+	dcache_writeback_invalidate_region(stream, sizeof(*stream));
+
+	spin_unlock_irq(lock, flags);
+}
 
 /**
  * Applies parameters to the buffer.
@@ -477,6 +523,9 @@ static inline void audio_stream_invalidate(struct audio_stream *buffer,
 	uint32_t head_size = bytes;
 	uint32_t tail_size = 0;
 
+	if (!buffer->inter_core)
+		return;
+
 	/* check for potential wrap */
 	if ((char *)buffer->r_ptr + bytes > (char *)buffer->end_addr) {
 		head_size = (char *)buffer->end_addr - (char *)buffer->r_ptr;
@@ -499,6 +548,9 @@ static inline void audio_stream_writeback(struct audio_stream *buffer,
 {
 	uint32_t head_size = bytes;
 	uint32_t tail_size = 0;
+
+	if (!buffer->inter_core)
+		return;
 
 	/* check for potential wrap */
 	if ((char *)buffer->w_ptr + bytes > (char *)buffer->end_addr) {
