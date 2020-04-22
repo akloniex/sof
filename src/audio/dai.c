@@ -657,7 +657,6 @@ static int dai_copy(struct comp_dev *dev)
 	uint32_t src_samples;
 	uint32_t sink_samples;
 	int ret = 0;
-	uint32_t flags = 0;
 
 	comp_dbg(dev, "dai_copy()");
 
@@ -667,8 +666,6 @@ static int dai_copy(struct comp_dev *dev)
 		dai_report_xrun(dev, 0);
 		return ret;
 	}
-
-	buffer_lock(buf, &flags);
 
 	/* calculate minimum size to copy */
 	if (dev->direction == SOF_IPC_STREAM_PLAYBACK) {
@@ -682,8 +679,6 @@ static int dai_copy(struct comp_dev *dev)
 		copy_bytes = MIN(src_samples, sink_samples) *
 			     get_sample_bytes(dd->frame_fmt);
 	}
-
-	buffer_unlock(buf, flags);
 
 	comp_dbg(dev, "dai_copy(), copy_bytes = 0x%x", copy_bytes);
 

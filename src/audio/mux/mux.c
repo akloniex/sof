@@ -275,7 +275,6 @@ static int demux_copy(struct comp_dev *dev)
 	uint32_t source_bytes;
 	uint32_t avail;
 	uint32_t sinks_bytes[MUX_MAX_STREAMS] = { 0 };
-	uint32_t flags = 0;
 
 	comp_dbg(dev, "demux_copy()");
 
@@ -302,25 +301,19 @@ static int demux_copy(struct comp_dev *dev)
 	source = list_first_item(&dev->bsource_list, struct comp_buffer,
 				 sink_list);
 
-	buffer_lock(source, &flags);
-
 	/* check if source is active */
 	if (source->source->state != dev->state) {
-		buffer_unlock(source, flags);
 		return 0;
 	}
 
 	for (i = 0; i < MUX_MAX_STREAMS; i++) {
 		if (!sinks[i])
 			continue;
-		buffer_lock(sinks[i], &flags);
+
 		avail = audio_stream_avail_frames(&source->stream,
 						  &sinks[i]->stream);
 		frames = MIN(frames, avail);
-		buffer_unlock(sinks[i], flags);
 	}
-
-	buffer_unlock(source, flags);
 
 	source_bytes = frames * audio_stream_frame_bytes(&source->stream);
 	for (i = 0; i < MUX_MAX_STREAMS; i++) {
@@ -366,7 +359,6 @@ static int mux_copy(struct comp_dev *dev)
 	uint32_t frames = -1;
 	uint32_t sources_bytes[MUX_MAX_STREAMS] = { 0 };
 	uint32_t sink_bytes;
-	uint32_t flags = 0;
 
 	comp_dbg(dev, "mux_copy()");
 
@@ -379,14 +371,11 @@ static int mux_copy(struct comp_dev *dev)
 	/* align source streams with their respective configurations */
 	list_for_item(clist, &dev->bsource_list) {
 		source = container_of(clist, struct comp_buffer, sink_list);
-		buffer_lock(source, &flags);
 		if (source->source->state == dev->state) {
 			num_sources++;
 			i = get_stream_index(cd, source->pipeline_id);
 			sources[i] = source;
 			sources_stream[i] = &source->stream;
-		} else {
-			buffer_unlock(source, flags);
 		}
 	}
 
@@ -397,17 +386,13 @@ static int mux_copy(struct comp_dev *dev)
 	sink = list_first_item(&dev->bsink_list, struct comp_buffer,
 			       source_list);
 
-	buffer_lock(sink, &flags);
-
 	/* check if sink is active */
 	if (sink->sink->state != dev->state) {
 		for (i = 0; i < MUX_MAX_STREAMS; i++) {
 			if (!sources[i])
 				continue;
-			buffer_unlock(sources[i], flags);
 		}
 
-		buffer_unlock(sink, flags);
 		return 0;
 	}
 
@@ -417,10 +402,7 @@ static int mux_copy(struct comp_dev *dev)
 		frames = MIN(frames,
 			     audio_stream_avail_frames(sources_stream[i],
 						       &sink->stream));
-		buffer_unlock(sources[i], flags);
 	}
-
-	buffer_unlock(sink, flags);
 
 	for (i = 0; i < MUX_MAX_STREAMS; i++) {
 		if (!sources[i])

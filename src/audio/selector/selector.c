@@ -104,7 +104,6 @@ static int selector_verify_params(struct comp_dev *dev,
 	struct comp_buffer *sinkb;
 	uint32_t in_channels;
 	uint32_t out_channels;
-	uint32_t flags = 0;
 
 	comp_dbg(dev, "selector_verify_params()");
 
@@ -128,8 +127,6 @@ static int selector_verify_params(struct comp_dev *dev,
 		}
 		in_channels = cd->config.in_channels_count;
 
-		buffer_lock(buffer, &flags);
-
 		/* if cd->config.out_channels_count are equal to 0
 		 * (it can vary), we set params->channels to sink buffer
 		 * channels, which were previosly set in
@@ -149,8 +146,6 @@ static int selector_verify_params(struct comp_dev *dev,
 		}
 		out_channels = cd->config.out_channels_count;
 
-		buffer_lock(buffer, &flags);
-
 		/* if cd->config.in_channels_count are equal to 0
 		 * (it can vary), we set params->channels to source buffer
 		 * channels, which were previosly set in
@@ -166,8 +161,6 @@ static int selector_verify_params(struct comp_dev *dev,
 
 	/* set component period frames */
 	component_set_period_frames(dev, sinkb->stream.rate);
-
-	buffer_unlock(buffer, flags);
 
 	/* verify input channels */
 	switch (in_channels) {
@@ -379,7 +372,6 @@ static int selector_copy(struct comp_dev *dev)
 	uint32_t frames;
 	uint32_t source_bytes;
 	uint32_t sink_bytes;
-	uint32_t flags = 0;
 
 	comp_dbg(dev, "selector_copy()");
 
@@ -389,15 +381,9 @@ static int selector_copy(struct comp_dev *dev)
 	sink = list_first_item(&dev->bsink_list, struct comp_buffer,
 			       source_list);
 
-	buffer_lock(source, &flags);
-	buffer_lock(sink, &flags);
-
 	frames = audio_stream_avail_frames(&source->stream, &sink->stream);
 	source_bytes = frames * audio_stream_frame_bytes(&source->stream);
 	sink_bytes = frames * audio_stream_frame_bytes(&sink->stream);
-
-	buffer_unlock(sink, flags);
-	buffer_unlock(source, flags);
 
 	comp_dbg(dev, "selector_copy(), source_bytes = 0x%x, sink_bytes = 0x%x",
 		 source_bytes, sink_bytes);

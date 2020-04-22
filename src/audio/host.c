@@ -241,17 +241,12 @@ static uint32_t host_get_copy_bytes_one_shot(struct comp_dev *dev)
 	struct dma_sg_elem *local_elem = hd->config.elem_array.elems;
 	uint32_t copy_bytes = 0;
 	uint32_t split_value;
-	uint32_t flags = 0;
-
-	buffer_lock(hd->local_buffer, &flags);
 
 	/* calculate minimum size to copy */
 	if (dev->direction == SOF_IPC_STREAM_PLAYBACK)
 		copy_bytes = hd->local_buffer->stream.free;
 	else
 		copy_bytes = hd->local_buffer->stream.avail;
-
-	buffer_unlock(hd->local_buffer, flags);
 
 	/* copy_bytes should be aligned to minimum possible chunk of
 	 * data to be copied by dma.
@@ -320,7 +315,6 @@ static uint32_t host_get_copy_bytes_normal(struct comp_dev *dev)
 	uint32_t avail_bytes = 0;
 	uint32_t free_bytes = 0;
 	uint32_t copy_bytes = 0;
-	uint32_t flags = 0;
 	int ret;
 
 	/* get data sizes from DMA */
@@ -332,8 +326,6 @@ static uint32_t host_get_copy_bytes_normal(struct comp_dev *dev)
 		return 0;
 	}
 
-	buffer_lock(hd->local_buffer, &flags);
-
 	/* calculate minimum size to copy */
 	if (dev->direction == SOF_IPC_STREAM_PLAYBACK)
 		copy_bytes = MIN(avail_bytes,
@@ -341,8 +333,6 @@ static uint32_t host_get_copy_bytes_normal(struct comp_dev *dev)
 	else
 		copy_bytes = MIN(hd->local_buffer->stream.avail,
 				 free_bytes);
-
-	buffer_unlock(hd->local_buffer, flags);
 
 	/* copy_bytes should be aligned to minimum possible chunk of
 	 * data to be copied by dma.

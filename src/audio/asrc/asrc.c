@@ -822,7 +822,6 @@ static int asrc_copy(struct comp_dev *dev)
 	int frames_src;
 	int frames_snk;
 	int ret;
-	uint32_t flags = 0;
 
 	comp_dbg(dev, "asrc_copy()");
 
@@ -836,14 +835,8 @@ static int asrc_copy(struct comp_dev *dev)
 	sink = list_first_item(&dev->bsink_list, struct comp_buffer,
 			       source_list);
 
-	buffer_lock(source, &flags);
-	buffer_lock(sink, &flags);
-
 	frames_src = audio_stream_get_avail_frames(&source->stream);
 	frames_snk = audio_stream_get_free_frames(&sink->stream);
-
-	buffer_unlock(sink, flags);
-	buffer_unlock(source, flags);
 
 	if (cd->mode == ASRC_OM_PULL) {
 		/* Let ASRC access max number of source frames in pull mode.

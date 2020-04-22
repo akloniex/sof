@@ -726,7 +726,6 @@ static int test_keyword_copy(struct comp_dev *dev)
 	struct comp_data *cd = comp_get_drvdata(dev);
 	struct comp_buffer *source;
 	uint32_t frames;
-	uint32_t flags = 0;
 
 	comp_dbg(dev, "test_keyword_copy()");
 
@@ -734,10 +733,8 @@ static int test_keyword_copy(struct comp_dev *dev)
 	source = list_first_item(&dev->bsource_list,
 				 struct comp_buffer, sink_list);
 
-	buffer_lock(source, &flags);
 	frames = source->stream.avail /
 		audio_stream_frame_bytes(&source->stream);
-	buffer_unlock(source, flags);
 
 	/* copy and perform detection */
 	buffer_invalidate(source, source->stream.avail);
