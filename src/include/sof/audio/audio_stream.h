@@ -19,6 +19,7 @@
 #include <sof/math/numbers.h>
 #include <sof/lib/alloc.h>
 #include <sof/lib/cache.h>
+#include <sof/spinlock.h>
 #include <ipc/stream.h>
 #include <config.h>
 #include <stdbool.h>
@@ -43,6 +44,8 @@
  * series of reads/writes).
  */
 struct audio_stream {
+	spinlock_t *lock;		/* locking mechanism */
+
 	/* runtime data */
 	uint32_t size;	/**< Runtime buffer size in bytes (period multiple) */
 	uint32_t avail;	/**< Available bytes for reading */
@@ -59,6 +62,9 @@ struct audio_stream {
 
 	bool overrun_permitted; /**< indicates whether overrun is permitted */
 	bool underrun_permitted; /**< indicates whether underrun is permitted */
+
+	bool inter_core; /* true if connected to a comp from another core */
+	bool hw_params_configured; /**< indicates whether hw params were set */
 };
 
 /**

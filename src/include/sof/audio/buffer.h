@@ -18,7 +18,6 @@
 #include <sof/lib/uuid.h>
 #include <sof/list.h>
 #include <sof/math/numbers.h>
-#include <sof/spinlock.h>
 #include <sof/string.h>
 #include <sof/trace/trace.h>
 #include <ipc/stream.h>
@@ -85,8 +84,6 @@ extern struct tr_ctx buffer_tr;
 
 /* audio component buffer - connects 2 audio components together in pipeline */
 struct comp_buffer {
-	spinlock_t *lock;		/* locking mechanism */
-
 	/* data buffer */
 	struct audio_stream stream;
 
@@ -95,7 +92,6 @@ struct comp_buffer {
 	uint32_t pipeline_id;
 	uint32_t caps;
 	uint32_t core;
-	bool inter_core; /* true if connected to a comp from another core */
 	struct tr_ctx tctx;			/* trace settings */
 
 	/* connected components */
@@ -109,8 +105,6 @@ struct comp_buffer {
 	/* runtime stream params */
 	uint32_t buffer_fmt;	/**< enum sof_ipc_buffer_format */
 	uint16_t chmap[SOF_IPC_MAX_CHANNELS];	/**< channel map - SOF_CHMAP_ */
-
-	bool hw_params_configured; /**< indicates whether hw params were set */
 };
 
 struct buffer_cb_transact {
@@ -166,7 +160,7 @@ void comp_update_buffer_consume(struct comp_buffer *buffer, uint32_t bytes);
 
 static inline void buffer_invalidate(struct comp_buffer *buffer, uint32_t bytes)
 {
-	if (!buffer->inter_core)
+	if (!buffer->stream.inter_core)
 		return;
 
 	audio_stream_invalidate(&buffer->stream, bytes);
@@ -174,7 +168,7 @@ static inline void buffer_invalidate(struct comp_buffer *buffer, uint32_t bytes)
 
 static inline void buffer_writeback(struct comp_buffer *buffer, uint32_t bytes)
 {
-	if (!buffer->inter_core)
+	if (!buffer->stream.inter_core)
 		return;
 
 	audio_stream_writeback(&buffer->stream, bytes);
@@ -189,10 +183,10 @@ static inline void buffer_writeback(struct comp_buffer *buffer, uint32_t bytes)
  */
 static inline void buffer_lock(struct comp_buffer *buffer, uint32_t *flags)
 {
-	if (!buffer->inter_core)
+	if (!buffer->stream.inter_core)
 		return;
 
-	spin_lock_irq(buffer->lock, *flags);
+	spin_lock_irq(buffer->stream.lock, *flags);
 
 	/* invalidate in case something has changed during our wait */
 	dcache_invalidate_region(buffer, sizeof(*buffer));
@@ -208,11 +202,11 @@ static inline void buffer_lock(struct comp_buffer *buffer, uint32_t *flags)
  */
 static inline void buffer_unlock(struct comp_buffer *buffer, uint32_t flags)
 {
-	if (!buffer->inter_core)
+	if (!buffer->stream.inter_core)
 		return;
 
 	/* save lock pointer to avoid memory access after cache flushing */
-	spinlock_t *lock = buffer->lock;
+	spinlock_t *lock = buffer->stream.lock;
 
 	/* wtb and inv to avoid buffer locking in read only situations */
 	dcache_writeback_invalidate_region(buffer, sizeof(*buffer));
@@ -260,7 +254,7 @@ static inline void buffer_reset_params(struct comp_buffer *buffer, void *data)
 
 	buffer_lock(buffer, &flags);
 
-	buffer->hw_params_configured = false;
+	buffer->stream.hw_params_configured = false;
 
 	buffer_unlock(buffer, flags);
 }
@@ -277,7 +271,7 @@ static inline int buffer_set_params(struct comp_buffer *buffer,
 		return -EINVAL;
 	}
 
-	if (buffer->hw_params_configured && !force_update)
+	if (buffer->stream.hw_params_configured && !force_update)
 		return 0;
 
 	ret = audio_stream_set_params(&buffer->stream, params);
@@ -290,7 +284,7 @@ static inline int buffer_set_params(struct comp_buffer *buffer,
 	for (i = 0; i < SOF_IPC_MAX_CHANNELS; i++)
 		buffer->chmap[i] = params->chmap[i];
 
-	buffer->hw_params_configured = true;
+	buffer->stream.hw_params_configured = true;
 
 	return 0;
 }
