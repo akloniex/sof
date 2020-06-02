@@ -183,13 +183,7 @@ static inline void buffer_writeback(struct comp_buffer *buffer, uint32_t bytes)
  */
 static inline void buffer_lock(struct comp_buffer *buffer, uint32_t *flags)
 {
-	if (!buffer->stream.inter_core)
-		return;
-
-	spin_lock_irq(buffer->stream.lock, *flags);
-
-	/* invalidate in case something has changed during our wait */
-	dcache_invalidate_region(buffer, sizeof(*buffer));
+	audio_stream_lock(&buffer->stream, flags);
 }
 
 /**
@@ -202,16 +196,7 @@ static inline void buffer_lock(struct comp_buffer *buffer, uint32_t *flags)
  */
 static inline void buffer_unlock(struct comp_buffer *buffer, uint32_t flags)
 {
-	if (!buffer->stream.inter_core)
-		return;
-
-	/* save lock pointer to avoid memory access after cache flushing */
-	spinlock_t *lock = buffer->stream.lock;
-
-	/* wtb and inv to avoid buffer locking in read only situations */
-	dcache_writeback_invalidate_region(buffer, sizeof(*buffer));
-
-	spin_unlock_irq(lock, flags);
+	audio_stream_unlock(&buffer->stream, flags);
 }
 
 static inline void buffer_zero(struct comp_buffer *buffer)

@@ -166,6 +166,48 @@ struct audio_stream {
 #define audio_stream_get_frag(buffer, ptr, idx, sample_size) \
 	audio_stream_wrap(buffer, (char *)(ptr) + ((idx) * (sample_size)))
 
+ /**
+  * Locks audio stream instance for buffers connecting components
+  * running on different cores. Stream parameters will be invalidated
+  * to make sure the latest data can be retrieved.
+  * @param stream Audio Stream instance.
+  * @param flags IRQ flags.
+  */
+static inline void audio_stream_lock(struct audio_stream *stream,
+				     uint32_t *flags)
+{
+	if (!stream->inter_core)
+		return;
+
+	spin_lock_irq(stream->lock, *flags);
+
+	/* invalidate in case something has changed during our wait */
+	dcache_invalidate_region(stream, sizeof(*stream));
+}
+
+/**
+ * Unlocks audio stream instance for buffers connecting components
+ * running on different cores. Stream parameters will be flushed
+ * to make sure all the changes are saved. Also they will be invalidated
+ * to spare the need of locking/unlocking buffer, when only reading parameters.
+ * @param stream Audio Stream instance.
+ * @param flags IRQ flags.
+ */
+static inline void audio_stream_unlock(struct audio_stream *stream,
+				       uint32_t flags)
+{
+	if (!stream->inter_core)
+		return;
+
+	/* save lock pointer to avoid memory access after cache flushing */
+	spinlock_t *lock = stream->lock;
+
+	/* wtb and inv to avoid stream locking in read only situations */
+	dcache_writeback_invalidate_region(stream, sizeof(*stream));
+
+	spin_unlock_irq(lock, flags);
+}
+
 /**
  * Applies parameters to the buffer.
  * @param buffer Buffer.
