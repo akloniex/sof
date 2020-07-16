@@ -53,7 +53,12 @@ struct comp_buffer *buffer_alloc(uint32_t size, uint32_t caps, uint32_t align)
 		return NULL;
 	}
 
-	buffer->stream.addr = rballoc_align(0, caps, size, align);
+	if (align == 0)
+		buffer->stream.separator = 4;
+	else
+		buffer->stream.separator = align;
+
+	buffer->stream.addr = rballoc_align(0, caps, size + buffer->stream.separator, align);
 	if (!buffer->stream.addr) {
 		rfree(buffer);
 		tr_err(&buffer_tr, "buffer_alloc(): could not alloc size = %u bytes of type = %u",
@@ -185,7 +190,7 @@ void comp_update_buffer_produce(struct comp_buffer *buffer, uint32_t bytes)
 	addr = buffer->stream.addr;
 
 	buf_dbg(buffer, "comp_update_buffer_produce(), ((buffer->avail << 16) | buffer->free) = %08x, ((buffer->id << 16) | buffer->size) = %08x",
-		(buffer->stream.avail << 16) | buffer->stream.free,
+		(audio_stream_get_avail_bytes(&buffer->stream) << 16) | audio_stream_get_free_bytes(&buffer->stream),
 		(buffer->id << 16) | buffer->stream.size);
 	buf_dbg(buffer, "comp_update_buffer_produce(), ((buffer->r_ptr - buffer->addr) << 16 | (buffer->w_ptr - buffer->addr)) = %08x",
 		((char *)buffer->stream.r_ptr - addr) << 16 |
@@ -224,7 +229,7 @@ void comp_update_buffer_consume(struct comp_buffer *buffer, uint32_t bytes)
 	addr = buffer->stream.addr;
 
 	buf_dbg(buffer, "comp_update_buffer_consume(), (buffer->avail << 16) | buffer->free = %08x, (buffer->id << 16) | buffer->size = %08x, (buffer->r_ptr - buffer->addr) << 16 | (buffer->w_ptr - buffer->addr)) = %08x",
-		(buffer->stream.avail << 16) | buffer->stream.free,
+		(audio_stream_get_avail_bytes(&buffer->stream) << 16) | audio_stream_get_free_bytes(&buffer->stream),
 		(buffer->id << 16) | buffer->stream.size,
 		((char *)buffer->stream.r_ptr - addr) << 16 |
 		((char *)buffer->stream.w_ptr - addr));

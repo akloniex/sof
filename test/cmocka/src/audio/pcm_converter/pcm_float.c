@@ -76,7 +76,12 @@ static struct audio_stream *create_test_buffer(enum sof_ipc_frame frame_frm,
 	buffer = malloc(sizeof(*buffer));
 	assert_non_null(buffer);
 
-	buffer->addr = malloc(size);
+	if (PLATFORM_DCACHE_ALIGN != 0)
+		buffer->separator = PLATFORM_DCACHE_ALIGN;
+	else
+		buffer->separator = 4;
+
+	buffer->addr = malloc(size + buffer->separator);
 	assert_non_null(buffer->addr);
 
 	audio_stream_init(buffer, buffer->addr, size);

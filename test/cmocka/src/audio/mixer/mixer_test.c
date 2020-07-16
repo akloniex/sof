@@ -271,8 +271,8 @@ static void test_audio_mixer_copy(void **state)
 			samples[smp] = ((sin(rad) + 1) / 2) * (0xFFFFFFFF / 2);
 		}
 
-		tc->sources[src_idx].buf->stream.avail =
-			tc->sources[src_idx].buf->stream.size;
+		audio_stream_produce(&tc->sources[src_idx].buf->stream,
+				     tc->sources[src_idx].buf->stream.size - tc->sources[src_idx].buf->stream.separator);
 	}
 
 	mixer_drv_mock.ops.copy(mixer_dev_mock);

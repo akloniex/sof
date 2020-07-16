@@ -121,11 +121,11 @@ static void prepare_sinks(struct test_data *td, size_t sample_size)
 						i,
 						td->format,
 						PLATFORM_MAX_CHANNELS);
-		td->sinks[i]->stream.free = sample_size * PLATFORM_MAX_CHANNELS;
+		audio_stream_produce(&td->sinks[i]->stream, td->sinks[i]->stream.size - sample_size * PLATFORM_MAX_CHANNELS);
 		td->outputs[i] = malloc(sample_size * PLATFORM_MAX_CHANNELS);
 		td->sinks[i]->stream.w_ptr = td->outputs[i];
 
-		memset(td->outputs[i], 0, td->sinks[i]->stream.free);
+		memset(td->outputs[i], 0, audio_stream_get_free_bytes(&td->sinks[i]->stream));
 	}
 }
 
@@ -135,7 +135,7 @@ static void prepare_source(struct test_data *td, size_t sample_size)
 					MUX_MAX_STREAMS + 1,
 					td->format,
 					PLATFORM_MAX_CHANNELS);
-	td->source->stream.avail = sample_size * PLATFORM_MAX_CHANNELS;
+	audio_stream_produce(&td->source->stream, sample_size * PLATFORM_MAX_CHANNELS);
 
 	if (td->format == SOF_IPC_FRAME_S16_LE)
 		td->source->stream.r_ptr = input_16b;

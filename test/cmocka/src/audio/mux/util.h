@@ -27,9 +27,12 @@ static inline struct comp_buffer *create_test_sink(struct comp_dev *dev,
 	buffer->sink->state = COMP_STATE_PREPARE;
 	buffer->stream.frame_fmt = frame_fmt;
 	buffer->stream.channels = channels;
-	buffer->stream.free = 0;
-	buffer->stream.avail = 0;
+	//buffer->stream.free = 0;
+	//buffer->stream.avail = 0;
 	buffer->pipeline_id = pipeline_id;
+
+	buffer->stream.separator = 4;
+	audio_stream_init(&buffer->stream, NULL, 500);
 
 	return buffer;
 }
@@ -55,9 +58,12 @@ static inline struct comp_buffer *create_test_source(struct comp_dev *dev,
 	buffer->source->state = COMP_STATE_PREPARE;
 	buffer->stream.frame_fmt = frame_fmt;
 	buffer->stream.channels = channels;
-	buffer->stream.free = 0;
-	buffer->stream.avail = 0;
+	//buffer->stream.free = 0;
+	//buffer->stream.avail = 0;
 	buffer->pipeline_id = pipeline_id;
+
+	buffer->stream.separator = 4;
+	audio_stream_init(&buffer->stream, NULL, 500);
 
 	return buffer;
 }

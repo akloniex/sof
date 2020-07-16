@@ -45,12 +45,14 @@
 struct audio_stream {
 	/* runtime data */
 	uint32_t size;	/**< Runtime buffer size in bytes (period multiple) */
-	uint32_t avail;	/**< Available bytes for reading */
-	uint32_t free;	/**< Free bytes for writing */
+	uint32_t separator; /**< Amount of bytes composing a separator between
+			      * r/w ptrs, adjusted to match cache alignment */
 	void *w_ptr;	/**< Buffer write pointer */
 	void *r_ptr;	/**< Buffer read position */
 	void *addr;	/**< Buffer base address */
 	void *end_addr;	/**< Buffer end address */
+	void **uncached_w_ptr; /* Address of w ptr with uncached access */
+	void **uncached_r_ptr; /* Address of r ptr with uncached access */
 
 	/* runtime stream params */
 	enum sof_ipc_frame frame_fmt;	/**< Sample data format */
@@ -236,6 +238,20 @@ static inline void *audio_stream_wrap(const struct audio_stream *buffer,
 static inline uint32_t
 audio_stream_get_avail_bytes(const struct audio_stream *stream)
 {
+	uint32_t avail = 0;
+	void *w_ptr = *stream->uncached_w_ptr;
+	void *r_ptr = *stream->uncached_r_ptr;
+
+	platform_shared_commit(stream->uncached_w_ptr, sizeof(void *));
+	platform_shared_commit(stream->uncached_r_ptr, sizeof(void *));
+
+	/* calculate available bytes */
+	if (r_ptr < w_ptr)
+		avail = (char *)w_ptr - (char *)r_ptr;
+	else if (r_ptr == w_ptr)
+		avail = 0; /* empty */
+	else
+		avail = stream->size - ((char *)r_ptr - (char *)w_ptr);
 	/*
 	 * In case of underrun-permitted stream, report buffer full instead of
 	 * empty. This way, any data present in such stream is processed at
@@ -243,9 +259,9 @@ audio_stream_get_avail_bytes(const struct audio_stream *stream)
 	 * clients, and in turn will not cause underrun/XRUN.
 	 */
 	if (stream->underrun_permitted)
-		return stream->avail != 0 ? stream->avail : stream->size;
+		return avail != 0 ? avail : stream->size;
 
-	return stream->avail;
+	return avail;
 }
 
 /**
@@ -280,6 +296,8 @@ audio_stream_get_avail_frames(const struct audio_stream *stream)
 static inline uint32_t
 audio_stream_get_free_bytes(const struct audio_stream *stream)
 {
+	uint32_t free = stream->size - audio_stream_get_avail_bytes(stream)
+			- stream->separator;
 	/*
 	 * In case of overrun-permitted stream, report buffer empty instead of
 	 * full. This way, if there's any actual free space for data it is
@@ -287,9 +305,9 @@ audio_stream_get_free_bytes(const struct audio_stream *stream)
 	 * completely full by clients, and in turn will not cause overrun/XRUN.
 	 */
 	if (stream->overrun_permitted)
-		return stream->free != 0 ? stream->free : stream->size;
+		return free != 0 ? free : stream->size - stream->separator;
 
-	return stream->free;
+	return free;
 }
 
 /**
@@ -389,24 +407,18 @@ audio_stream_avail_frames(const struct audio_stream *source,
 static inline void audio_stream_produce(struct audio_stream *buffer,
 					uint32_t bytes)
 {
-	buffer->w_ptr = audio_stream_wrap(buffer,
-					  (char *)buffer->w_ptr + bytes);
+	uint32_t free = audio_stream_get_free_bytes(buffer);
+
+	*buffer->uncached_w_ptr = audio_stream_wrap(buffer,
+				  (char *)*buffer->uncached_w_ptr + bytes);
 
 	/* "overwrite" old data in circular wrap case */
-	if (bytes > buffer->free)
-		buffer->r_ptr = buffer->w_ptr;
+	if (bytes > free) {
+		*buffer->uncached_r_ptr = audio_stream_wrap(buffer, (char *)*buffer->uncached_w_ptr + buffer->separator);
+		platform_shared_commit(buffer->uncached_r_ptr, sizeof(void *));
+	}
 
-	/* calculate available bytes */
-	if (buffer->r_ptr < buffer->w_ptr)
-		buffer->avail = (char *)buffer->w_ptr - (char *)buffer->r_ptr;
-	else if (buffer->r_ptr == buffer->w_ptr)
-		buffer->avail = buffer->size; /* full */
-	else
-		buffer->avail = buffer->size -
-			((char *)buffer->r_ptr - (char *)buffer->w_ptr);
-
-	/* calculate free bytes */
-	buffer->free = buffer->size - buffer->avail;
+	platform_shared_commit(buffer->uncached_w_ptr, sizeof(void *));
 }
 
 /**
@@ -419,18 +431,6 @@ static inline void audio_stream_consume(struct audio_stream *buffer,
 {
 	buffer->r_ptr = audio_stream_wrap(buffer,
 					  (char *)buffer->r_ptr + bytes);
-
-	/* calculate available bytes */
-	if (buffer->r_ptr < buffer->w_ptr)
-		buffer->avail = (char *)buffer->w_ptr - (char *)buffer->r_ptr;
-	else if (buffer->r_ptr == buffer->w_ptr)
-		buffer->avail = 0; /* empty */
-	else
-		buffer->avail = buffer->size -
-			((char *)buffer->r_ptr - (char *)buffer->w_ptr);
-
-	/* calculate free bytes */
-	buffer->free = buffer->size - buffer->avail;
 }
 
 /**
@@ -440,14 +440,10 @@ static inline void audio_stream_consume(struct audio_stream *buffer,
 static inline void audio_stream_reset(struct audio_stream *buffer)
 {
 	/* reset read and write pointer to buffer bas */
-	buffer->w_ptr = buffer->addr;
-	buffer->r_ptr = buffer->addr;
-
-	/* free space is buffer size */
-	buffer->free = buffer->size;
-
-	/* there are no avail samples at reset */
-	buffer->avail = 0;
+	*buffer->uncached_w_ptr = buffer->addr;
+	platform_shared_commit(buffer->uncached_w_ptr, sizeof(void *));
+	*buffer->uncached_r_ptr = buffer->addr;
+	platform_shared_commit(buffer->uncached_r_ptr, sizeof(void *));
 }
 
 /**
@@ -459,9 +455,11 @@ static inline void audio_stream_reset(struct audio_stream *buffer)
 static inline void audio_stream_init(struct audio_stream *buffer,
 				     void *buff_addr, uint32_t size)
 {
-	buffer->size = size;
+	buffer->size = size + buffer->separator;
 	buffer->addr = buff_addr;
-	buffer->end_addr = (char *)buffer->addr + size;
+	buffer->end_addr = (char *)buffer->addr + buffer->size;
+	buffer->uncached_w_ptr = (void **)platform_shared_get(&buffer->w_ptr, sizeof(void *));
+	buffer->uncached_r_ptr = (void **)platform_shared_get(&buffer->r_ptr, sizeof(void *));
 	audio_stream_reset(buffer);
 }
 
@@ -478,12 +476,13 @@ static inline void audio_stream_invalidate(struct audio_stream *buffer,
 	uint32_t tail_size = 0;
 
 	/* check for potential wrap */
-	if ((char *)buffer->r_ptr + bytes > (char *)buffer->end_addr) {
-		head_size = (char *)buffer->end_addr - (char *)buffer->r_ptr;
+	if ((char *)*buffer->uncached_r_ptr + bytes > (char *)buffer->end_addr) {
+		head_size = (char *)buffer->end_addr - (char *)*buffer->uncached_r_ptr;
 		tail_size = bytes - head_size;
 	}
 
-	dcache_invalidate_region(buffer->r_ptr, head_size);
+	dcache_invalidate_region(*buffer->uncached_r_ptr, head_size);
+	platform_shared_commit(buffer->uncached_r_ptr, sizeof(void *));
 	if (tail_size)
 		dcache_invalidate_region(buffer->addr, tail_size);
 }
@@ -501,12 +500,13 @@ static inline void audio_stream_writeback(struct audio_stream *buffer,
 	uint32_t tail_size = 0;
 
 	/* check for potential wrap */
-	if ((char *)buffer->w_ptr + bytes > (char *)buffer->end_addr) {
-		head_size = (char *)buffer->end_addr - (char *)buffer->w_ptr;
+	if ((char *)*buffer->uncached_w_ptr + bytes > (char *)buffer->end_addr) {
+		head_size = (char *)buffer->end_addr - (char *)*buffer->uncached_w_ptr;
 		tail_size = bytes - head_size;
 	}
 
-	dcache_writeback_region(buffer->w_ptr, head_size);
+	dcache_writeback_region(*buffer->uncached_w_ptr, head_size);
+	platform_shared_commit(buffer->uncached_w_ptr, sizeof(void *));
 	if (tail_size)
 		dcache_writeback_region(buffer->addr, tail_size);
 }
@@ -558,13 +558,16 @@ static inline void audio_stream_copy(const struct audio_stream *source,
 				     uint32_t ooffset_bytes, uint32_t bytes)
 {
 	void *src = audio_stream_wrap(source,
-				      (char *)source->r_ptr + ioffset_bytes);
+				      (char *)*source->uncached_r_ptr + ioffset_bytes);
 	void *snk = audio_stream_wrap(sink,
-				      (char *)sink->w_ptr + ooffset_bytes);
+				      (char *)*sink->uncached_w_ptr + ooffset_bytes);
 	uint32_t bytes_src;
 	uint32_t bytes_snk;
 	uint32_t bytes_copied;
 	int ret;
+
+	platform_shared_commit(source->uncached_r_ptr, sizeof(void *));
+	platform_shared_commit(sink->uncached_w_ptr, sizeof(void *));
 
 	while (bytes) {
 		bytes_src = audio_stream_bytes_without_wrap(source, src);

@@ -132,15 +132,19 @@ static struct sof_ipc_comp_process *create_mux_comp_ipc(struct test_data *td)
 
 static void prepare_sink(struct test_data *td, size_t sample_size)
 {
+	print_message("DUPA create sink");
 	td->sink = create_test_sink(td->dev,
 				    MUX_MAX_STREAMS + 1,
 				    td->format,
 				    PLATFORM_MAX_CHANNELS);
-	td->sink->stream.free = sample_size * PLATFORM_MAX_CHANNELS;
+	print_message("DUPA produce sink");
+	audio_stream_produce(&td->sink->stream, td->sink->stream.size - td->sink->stream.separator - sample_size * PLATFORM_MAX_CHANNELS);
+	print_message("DUPA malloc sink");
 	td->output = malloc(sample_size * PLATFORM_MAX_CHANNELS);
+	print_message("DUPA memset sink");
+	memset(td->output, 0, audio_stream_get_free_bytes(&td->sink->stream));
+	print_message("DUPA assign output");
 	td->sink->stream.w_ptr = td->output;
-
-	memset(td->output, 0, td->sink->stream.free);
 }
 
 static void prepare_sources(struct test_data *td, size_t sample_size)
@@ -152,8 +156,8 @@ static void prepare_sources(struct test_data *td, size_t sample_size)
 						    i,
 						    td->format,
 						    PLATFORM_MAX_CHANNELS);
-		td->sources[i]->stream.avail = sample_size *
-					       PLATFORM_MAX_CHANNELS;
+		audio_stream_produce(&td->sources[i]->stream,
+				     sample_size * PLATFORM_MAX_CHANNELS);
 
 		if (td->format == SOF_IPC_FRAME_S16_LE)
 			td->sources[i]->stream.r_ptr = input_16b[i];
@@ -178,10 +182,11 @@ static int setup_test_case(void **state)
 	if (!td->dev)
 		return -EINVAL;
 
+	print_message("DUPA prepare sink");
 	prepare_sink(td, sample_size);
-
+	print_message("DUPA prepare sources");
 	prepare_sources(td, sample_size);
-
+	print_message("DUPA comp prepare");
 	ret = comp_prepare(td->dev);
 	if (ret)
 		return ret;
@@ -211,7 +216,9 @@ static void test_mux_copy_proc_16(void **state)
 	int16_t expected_result[PLATFORM_MAX_CHANNELS];
 	int i, j, k;
 
+	print_message("DUPA 16 pre copy");
 	assert_int_equal(comp_copy(td->dev), 0);
+	print_message("DUPA 16 post copy");
 
 	for (i = 0; i < PLATFORM_MAX_CHANNELS; ++i) {
 		int32_t sample = 0;
@@ -235,7 +242,9 @@ static void test_mux_copy_proc_24(void **state)
 	int32_t expected_result[PLATFORM_MAX_CHANNELS];
 	int i, j, k;
 
+	print_message("DUPA 24 pre copy");
 	assert_int_equal(comp_copy(td->dev), 0);
+	print_message("DUPA 24 post copy");
 
 	for (i = 0; i < PLATFORM_MAX_CHANNELS; ++i) {
 		int32_t sample = 0;
@@ -259,7 +268,9 @@ static void test_mux_copy_proc_32(void **state)
 	int32_t expected_result[PLATFORM_MAX_CHANNELS];
 	int i, j, k;
 
+	print_message("DUPA 32 pre copy");
 	assert_int_equal(comp_copy(td->dev), 0);
+	print_message("DUPA 32 post copy");
 
 	for (i = 0; i < PLATFORM_MAX_CHANNELS; ++i) {
 		int32_t sample = 0;
@@ -334,6 +345,6 @@ int main(void)
 	}
 
 	cmocka_set_message_output(CM_OUTPUT_TAP);
-
+	print_message("DUPA setup done");
 	return cmocka_run_group_tests(tests, setup_group, NULL);
 }
