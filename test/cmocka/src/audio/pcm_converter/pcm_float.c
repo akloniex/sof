@@ -79,7 +79,7 @@ static struct audio_stream *create_test_buffer(enum sof_ipc_frame frame_frm,
 	buffer->addr = malloc(size);
 	assert_non_null(buffer->addr);
 
-	audio_stream_init(buffer, buffer->addr, size);
+	audio_stream_init(buffer, buffer->addr, size, false);
 
 	buffer->frame_fmt = frame_frm;
 

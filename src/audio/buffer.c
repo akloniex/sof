@@ -52,6 +52,15 @@ struct comp_buffer *buffer_alloc(uint32_t size, uint32_t caps, uint32_t align)
 		tr_err(&buffer_tr, "buffer_alloc(): could not alloc lock");
 		return NULL;
 	}
+	if (align == 0)
+		buffer->stream.ptr_distance = 4;
+	else
+		buffer->stream.ptr_distance = align;
+
+	if (caps & SOF_MEM_CAPS_DMA)
+		buffer->stream.ptr_distance = 0;
+
+	size += buffer->stream.ptr_distance;
 
 	buffer->stream.addr = rballoc_align(0, caps, size, align);
 	if (!buffer->stream.addr) {
@@ -111,6 +120,8 @@ int buffer_set_size(struct comp_buffer *buffer, uint32_t size)
 
 	if (size == buffer->stream.size)
 		return 0;
+
+	size += buffer->stream.ptr_distance;
 
 	new_ptr = rbrealloc(buffer->stream.addr, SOF_MEM_FLAG_NO_COPY,
 			    buffer->caps, size, buffer->stream.size);
