@@ -74,7 +74,8 @@ static void test_audio_buffer_fill_10_bytes(void **state)
 
 	assert_int_equal(audio_stream_get_avail_bytes(&buf->stream), 10);
 	assert_int_equal(audio_stream_get_free_bytes(&buf->stream), 0);
-	assert_ptr_equal(buf->stream.w_ptr, buf->stream.r_ptr);
+	assert_ptr_equal(audio_stream_wrap(&buf->stream, (char *)buf->stream.w_ptr +
+			 buf->stream.ptr_distance), buf->stream.r_ptr);
 
 	buffer_free(buf);
 }

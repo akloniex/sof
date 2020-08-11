@@ -251,7 +251,7 @@ static inline void buffer_init(struct comp_buffer *buffer, uint32_t size,
 	buffer->caps = caps;
 
 	/* addr should be set in alloc function */
-	audio_stream_init(&buffer->stream, buffer->stream.addr, size);
+	audio_stream_init(&buffer->stream, buffer->stream.addr, size, caps & SOF_MEM_CAPS_DMA);
 }
 
 static inline void buffer_reset_params(struct comp_buffer *buffer, void *data)

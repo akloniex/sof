@@ -44,7 +44,8 @@ static void test_audio_buffer_write_fill_10_bytes_and_write_5(void **state)
 
 	assert_int_equal(audio_stream_get_avail_bytes(&buf->stream), 10);
 	assert_int_equal(audio_stream_get_free_bytes(&buf->stream), 0);
-	assert_ptr_equal(buf->stream.w_ptr, buf->stream.r_ptr);
+	assert_ptr_equal(audio_stream_wrap(&buf->stream, (char *)buf->stream.w_ptr +
+			 buf->stream.ptr_distance), buf->stream.r_ptr);
 
 	uint8_t more_bytes[5] = {10, 11, 12, 13, 14};
 
@@ -59,7 +60,9 @@ static void test_audio_buffer_write_fill_10_bytes_and_write_5(void **state)
 
 	assert_int_equal(audio_stream_get_avail_bytes(&buf->stream), 10);
 	assert_int_equal(audio_stream_get_free_bytes(&buf->stream), 0);
-	assert_ptr_equal(buf->stream.w_ptr, buf->stream.r_ptr);
+	assert_ptr_equal(audio_stream_wrap(&buf->stream, (char *)buf->stream.w_ptr +
+			 buf->stream.ptr_distance), buf->stream.r_ptr);
+
 	for (i = 0; i < 5; i++) {
 		ptr = audio_stream_read_frag(&buf->stream, i, sizeof(uint8_t));
 		assert_int_equal(*ptr, ref_1[i]);
