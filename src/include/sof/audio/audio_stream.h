@@ -45,8 +45,7 @@
 struct audio_stream {
 	/* runtime data */
 	uint32_t size;	/**< Runtime buffer size in bytes (period multiple) */
-	uint32_t avail;	/**< Available bytes for reading */
-	uint32_t free;	/**< Free bytes for writing */
+	uint32_t ptr_distance;	/**< Distance between r/w ptrs when buffer is full */
 	void *w_ptr;	/**< Buffer write pointer */
 	void *r_ptr;	/**< Buffer read position */
 	void *addr;	/**< Buffer base address */
@@ -59,6 +58,9 @@ struct audio_stream {
 
 	bool overrun_permitted; /**< indicates whether overrun is permitted */
 	bool underrun_permitted; /**< indicates whether underrun is permitted */
+
+	bool is_dma_stream;	/**< indicates whether stream is used for dma connected buffer */
+	bool buffer_full;	/**< indicates whether buffer is full; used only for DMA streams */
 };
 
 /**
@@ -236,6 +238,19 @@ static inline void *audio_stream_wrap(const struct audio_stream *buffer,
 static inline uint32_t
 audio_stream_get_avail_bytes(const struct audio_stream *stream)
 {
+	uint32_t avail;
+
+	if (stream->r_ptr > stream->w_ptr)
+		avail = (char *)stream->w_ptr + stream->size + stream->ptr_distance -
+			(char *)stream->r_ptr;
+	else
+		avail = (char *)stream->w_ptr - (char *)stream->r_ptr;
+
+	if (stream->is_dma_stream) {
+		if (stream->buffer_full)
+			avail = stream->size;
+	}
+
 	/*
 	 * In case of underrun-permitted stream, report buffer full instead of
 	 * empty. This way, any data present in such stream is processed at
@@ -243,9 +258,9 @@ audio_stream_get_avail_bytes(const struct audio_stream *stream)
 	 * clients, and in turn will not cause underrun/XRUN.
 	 */
 	if (stream->underrun_permitted)
-		return stream->avail != 0 ? stream->avail : stream->size;
+		return avail != 0 ? avail : stream->size;
 
-	return stream->avail;
+	return avail;
 }
 
 /**
@@ -280,6 +295,8 @@ audio_stream_get_avail_frames(const struct audio_stream *stream)
 static inline uint32_t
 audio_stream_get_free_bytes(const struct audio_stream *stream)
 {
+	uint32_t free = stream->size - audio_stream_get_avail_bytes(stream);
+
 	/*
 	 * In case of overrun-permitted stream, report buffer empty instead of
 	 * full. This way, if there's any actual free space for data it is
@@ -287,9 +304,9 @@ audio_stream_get_free_bytes(const struct audio_stream *stream)
 	 * completely full by clients, and in turn will not cause overrun/XRUN.
 	 */
 	if (stream->overrun_permitted)
-		return stream->free != 0 ? stream->free : stream->size;
+		return free != 0 ? free : stream->size;
 
-	return stream->free;
+	return free;
 }
 
 /**
@@ -386,27 +403,20 @@ audio_stream_avail_frames(const struct audio_stream *source,
  * @param buffer Buffer to update.
  * @param bytes Number of written bytes.
  */
-static inline void audio_stream_produce(struct audio_stream *buffer,
-					uint32_t bytes)
+static inline void audio_stream_produce(struct audio_stream *buffer, uint32_t bytes)
 {
-	buffer->w_ptr = audio_stream_wrap(buffer,
-					  (char *)buffer->w_ptr + bytes);
+	uint32_t free = audio_stream_get_free_bytes(buffer);
+
+	buffer->w_ptr = audio_stream_wrap(buffer, (char *)buffer->w_ptr + bytes);
 
 	/* "overwrite" old data in circular wrap case */
-	if (bytes > audio_stream_get_free_bytes(buffer))
-		buffer->r_ptr = buffer->w_ptr;
+	if (bytes > free)
+		buffer->r_ptr = audio_stream_wrap(buffer,
+						  (char *)buffer->w_ptr + buffer->ptr_distance);
 
-	/* calculate available bytes */
-	if (buffer->r_ptr < buffer->w_ptr)
-		buffer->avail = (char *)buffer->w_ptr - (char *)buffer->r_ptr;
-	else if (buffer->r_ptr == buffer->w_ptr)
-		buffer->avail = buffer->size; /* full */
-	else
-		buffer->avail = buffer->size -
-			((char *)buffer->r_ptr - (char *)buffer->w_ptr);
-
-	/* calculate free bytes */
-	buffer->free = buffer->size - buffer->avail;
+	if (buffer->is_dma_stream)
+		buffer->buffer_full = (bytes || buffer->buffer_full) &&
+				      buffer->r_ptr == buffer->w_ptr;
 }
 
 /**
@@ -414,23 +424,12 @@ static inline void audio_stream_produce(struct audio_stream *buffer,
  * @param buffer Buffer to update.
  * @param bytes Number of read bytes.
  */
-static inline void audio_stream_consume(struct audio_stream *buffer,
-					uint32_t bytes)
+static inline void audio_stream_consume(struct audio_stream *buffer, uint32_t bytes)
 {
-	buffer->r_ptr = audio_stream_wrap(buffer,
-					  (char *)buffer->r_ptr + bytes);
+	buffer->r_ptr = audio_stream_wrap(buffer, (char *)buffer->r_ptr + bytes);
 
-	/* calculate available bytes */
-	if (buffer->r_ptr < buffer->w_ptr)
-		buffer->avail = (char *)buffer->w_ptr - (char *)buffer->r_ptr;
-	else if (buffer->r_ptr == buffer->w_ptr)
-		buffer->avail = 0; /* empty */
-	else
-		buffer->avail = buffer->size -
-			((char *)buffer->r_ptr - (char *)buffer->w_ptr);
-
-	/* calculate free bytes */
-	buffer->free = buffer->size - buffer->avail;
+	if (bytes > 0)
+		buffer->buffer_full = false;
 }
 
 /**
@@ -443,11 +442,7 @@ static inline void audio_stream_reset(struct audio_stream *buffer)
 	buffer->w_ptr = buffer->addr;
 	buffer->r_ptr = buffer->addr;
 
-	/* free space is buffer size */
-	buffer->free = buffer->size;
-
-	/* there are no avail samples at reset */
-	buffer->avail = 0;
+	buffer->buffer_full = false;
 }
 
 /**
@@ -455,13 +450,16 @@ static inline void audio_stream_reset(struct audio_stream *buffer)
  * @param buffer Buffer to initialize.
  * @param buff_addr Address of the memory block to assign.
  * @param size Size of the memory block in bytes.
+ * @param is_dma Flag informing whether audio_stream will be used by dma
  */
-static inline void audio_stream_init(struct audio_stream *buffer,
-				     void *buff_addr, uint32_t size)
+static inline void audio_stream_init(struct audio_stream *buffer, void *buff_addr, uint32_t size,
+				     uint32_t is_dma)
 {
-	buffer->size = size;
+	buffer->size = size - buffer->ptr_distance;
 	buffer->addr = buff_addr;
 	buffer->end_addr = (char *)buffer->addr + size;
+	buffer->is_dma_stream = is_dma;
+
 	audio_stream_reset(buffer);
 }
 

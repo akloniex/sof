@@ -391,7 +391,7 @@ static int selector_copy(struct comp_dev *dev)
 	sink = list_first_item(&dev->bsink_list, struct comp_buffer,
 			       source_list);
 
-	if (!source->stream.avail)
+	if (!audio_stream_get_avail_bytes(&source->stream))
 		return PPL_STATUS_PATH_STOP;
 
 	buffer_lock(source, &flags);
