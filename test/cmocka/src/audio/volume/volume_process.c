@@ -76,28 +76,28 @@ static int setup(void **state)
 	list_init(&vol_state->dev->bsink_list);
 
 	/* allocate new sink buffer */
-	vol_state->sink = test_malloc(sizeof(*vol_state->sink));
+	size = parameters->frames * get_frame_bytes(parameters->sink_format, parameters->channels) *
+	       parameters->buffer_size_ms;
+
+	struct sof_ipc_buffer test_sink_desc = {
+		.size = size
+	};
+	vol_state->sink = buffer_new(&test_sink_desc);
 	vol_state->sink->stream.frame_fmt = parameters->sink_format;
 	vol_state->sink->stream.channels = parameters->channels;
-	size = parameters->frames *
-	       audio_stream_frame_bytes(&vol_state->sink->stream);
-
-	vol_state->sink->stream.addr = test_calloc(parameters->buffer_size_ms,
-						   size);
-	buffer_init(vol_state->sink, parameters->buffer_size_ms * size, 0);
 
 	list_item_prepend(&vol_state->sink->source_list,
 			  &vol_state->dev->bsink_list);
 
 	/* allocate new source buffer */
-	vol_state->source = test_malloc(sizeof(*vol_state->source));
+	size = parameters->frames * get_frame_bytes(parameters->source_format,
+	       parameters->channels) * parameters->buffer_size_ms;
+	struct sof_ipc_buffer test_source_desc = {
+		.size = size
+	};
+	vol_state->source = buffer_new(&test_source_desc);
 	vol_state->source->stream.frame_fmt = parameters->source_format;
 	vol_state->source->stream.channels = parameters->channels;
-	size = parameters->frames *
-	       audio_stream_frame_bytes(&vol_state->source->stream);
-	vol_state->source->stream.addr = test_calloc(parameters->buffer_size_ms,
-						     size);
-	buffer_init(vol_state->source, parameters->buffer_size_ms * size, 0);
 
 	list_item_prepend(&vol_state->source->sink_list,
 			  &vol_state->dev->bsource_list);
@@ -123,10 +123,8 @@ static int teardown(void **state)
 	/* free everything */
 	test_free(cd);
 	test_free(vol_state->dev);
-	test_free(vol_state->sink->stream.addr);
-	test_free(vol_state->sink);
-	test_free(vol_state->source->stream.addr);
-	test_free(vol_state->source);
+	buffer_free(vol_state->sink);
+	buffer_free(vol_state->source);
 	test_free(vol_state);
 
 	return 0;
