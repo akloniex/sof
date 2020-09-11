@@ -50,6 +50,8 @@ struct audio_stream {
 	void *r_ptr;	/**< Buffer read position */
 	void *addr;	/**< Buffer base address */
 	void *end_addr;	/**< Buffer end address */
+	void **uncached_w_ptr; /* Address of w ptr with uncached access */
+	void **uncached_r_ptr; /* Address of r ptr with uncached access */
 
 	/* runtime stream params */
 	enum sof_ipc_frame frame_fmt;	/**< Sample data format */
@@ -82,7 +84,7 @@ struct audio_stream {
  * @see comp_update_buffer_consume().
  */
 #define audio_stream_read_frag(buffer, idx, size) \
-	audio_stream_get_frag(buffer, (buffer)->r_ptr, idx, size)
+	audio_stream_get_frag(buffer, (*(buffer)->uncached_r_ptr), idx, size)
 
 /**
  * Retrieves readable address of a signed 16-bit sample at specified index.
@@ -93,7 +95,7 @@ struct audio_stream {
  * @see audio_stream_get_frag().
  */
 #define audio_stream_read_frag_s16(buffer, idx) \
-	audio_stream_get_frag(buffer, (buffer)->r_ptr, idx, sizeof(int16_t))
+	audio_stream_read_frag(buffer, idx, sizeof(int16_t))
 
 /**
  * Retrieves readable address of a signed 32-bit sample at specified index.
@@ -104,7 +106,7 @@ struct audio_stream {
  * @see audio_stream_get_frag().
  */
 #define audio_stream_read_frag_s32(buffer, idx) \
-	audio_stream_get_frag(buffer, (buffer)->r_ptr, idx, sizeof(int32_t))
+	audio_stream_read_frag(buffer, idx, sizeof(int32_t))
 
 /**
  * Retrieves writeable address of a sample at specified index (see versions of
@@ -125,7 +127,7 @@ struct audio_stream {
  * @see comp_update_buffer_produce().
  */
 #define audio_stream_write_frag(buffer, idx, size) \
-	audio_stream_get_frag(buffer, (buffer)->w_ptr, idx, size)
+	audio_stream_get_frag(buffer, (*(buffer)->uncached_w_ptr), idx, size)
 
 /**
  * Retrieves writeable address of a signed 16-bit sample at specified index.
@@ -136,7 +138,7 @@ struct audio_stream {
  * @see audio_stream_get_frag().
  */
 #define audio_stream_write_frag_s16(buffer, idx) \
-	audio_stream_get_frag(buffer, (buffer)->w_ptr, idx, sizeof(int16_t))
+	audio_stream_write_frag(buffer, idx, sizeof(int16_t))
 
 /**
  * Retrieves writeable address of a signed 32-bit sample at specified index.
@@ -147,7 +149,7 @@ struct audio_stream {
  * @see audio_stream_get_frag().
  */
 #define audio_stream_write_frag_s32(buffer, idx) \
-	audio_stream_get_frag(buffer, (buffer)->w_ptr, idx, sizeof(int32_t))
+	audio_stream_write_frag(buffer, idx, sizeof(int32_t))
 
 /**
  * Retrieves address of sample (space for sample) at specified index within
@@ -239,12 +241,16 @@ static inline uint32_t
 audio_stream_get_avail_bytes(const struct audio_stream *stream)
 {
 	uint32_t avail;
+	void *w_ptr = *stream->uncached_w_ptr;
+	void *r_ptr = *stream->uncached_r_ptr;
 
-	if (stream->r_ptr > stream->w_ptr)
-		avail = (char *)stream->w_ptr + stream->size + stream->ptr_distance -
-			(char *)stream->r_ptr;
+	platform_shared_commit(stream->uncached_w_ptr, sizeof(void *));
+	platform_shared_commit(stream->uncached_r_ptr, sizeof(void *));
+
+	if (r_ptr > w_ptr)
+		avail = (char *)w_ptr + stream->size + stream->ptr_distance - (char *)r_ptr;
 	else
-		avail = (char *)stream->w_ptr - (char *)stream->r_ptr;
+		avail = (char *)w_ptr - (char *)r_ptr;
 
 	if (stream->is_dma_stream) {
 		if (stream->buffer_full)
@@ -407,12 +413,18 @@ static inline void audio_stream_produce(struct audio_stream *buffer, uint32_t by
 {
 	uint32_t free = audio_stream_get_free_bytes(buffer);
 
-	buffer->w_ptr = audio_stream_wrap(buffer, (char *)buffer->w_ptr + bytes);
+	*buffer->uncached_w_ptr = audio_stream_wrap(buffer, (char *)(*buffer->uncached_w_ptr) +
+						    bytes);
 
 	/* "overwrite" old data in circular wrap case */
-	if (bytes > free)
-		buffer->r_ptr = audio_stream_wrap(buffer,
-						  (char *)buffer->w_ptr + buffer->ptr_distance);
+	if (bytes > free) {
+		*buffer->uncached_r_ptr = audio_stream_wrap(buffer,
+							    (char *)(*buffer->uncached_w_ptr) +
+							    buffer->ptr_distance);
+		platform_shared_commit(buffer->uncached_r_ptr, sizeof(void *));
+	}
+
+	platform_shared_commit(buffer->uncached_w_ptr, sizeof(void *));
 
 	if (buffer->is_dma_stream)
 		buffer->buffer_full = (bytes || buffer->buffer_full) &&
@@ -426,7 +438,8 @@ static inline void audio_stream_produce(struct audio_stream *buffer, uint32_t by
  */
 static inline void audio_stream_consume(struct audio_stream *buffer, uint32_t bytes)
 {
-	buffer->r_ptr = audio_stream_wrap(buffer, (char *)buffer->r_ptr + bytes);
+	*buffer->uncached_r_ptr = audio_stream_wrap(buffer, (char *)(*buffer->uncached_r_ptr) +
+						    bytes);
 
 	if (bytes > 0)
 		buffer->buffer_full = false;
@@ -439,8 +452,10 @@ static inline void audio_stream_consume(struct audio_stream *buffer, uint32_t by
 static inline void audio_stream_reset(struct audio_stream *buffer)
 {
 	/* reset read and write pointer to buffer bas */
-	buffer->w_ptr = buffer->addr;
-	buffer->r_ptr = buffer->addr;
+	*buffer->uncached_w_ptr = buffer->addr;
+	platform_shared_commit(buffer->uncached_w_ptr, sizeof(void *));
+	*buffer->uncached_r_ptr = buffer->addr;
+	platform_shared_commit(buffer->uncached_r_ptr, sizeof(void *));
 
 	buffer->buffer_full = false;
 }
@@ -459,6 +474,8 @@ static inline void audio_stream_init(struct audio_stream *buffer, void *buff_add
 	buffer->addr = buff_addr;
 	buffer->end_addr = (char *)buffer->addr + size;
 	buffer->is_dma_stream = is_dma;
+	buffer->uncached_w_ptr = platform_shared_get(&buffer->w_ptr, sizeof(void *));
+	buffer->uncached_r_ptr = platform_shared_get(&buffer->r_ptr, sizeof(void *));
 
 	audio_stream_reset(buffer);
 }
@@ -476,12 +493,13 @@ static inline void audio_stream_invalidate(struct audio_stream *buffer,
 	uint32_t tail_size = 0;
 
 	/* check for potential wrap */
-	if ((char *)buffer->r_ptr + bytes > (char *)buffer->end_addr) {
-		head_size = (char *)buffer->end_addr - (char *)buffer->r_ptr;
+	if ((char *)(*buffer->uncached_r_ptr) + bytes > (char *)buffer->end_addr) {
+		head_size = (char *)buffer->end_addr - (char *)(*buffer->uncached_r_ptr);
 		tail_size = bytes - head_size;
 	}
 
-	dcache_invalidate_region(buffer->r_ptr, head_size);
+	dcache_invalidate_region(*buffer->uncached_r_ptr, head_size);
+	platform_shared_commit(buffer->uncached_r_ptr, sizeof(void *));
 	if (tail_size)
 		dcache_invalidate_region(buffer->addr, tail_size);
 }
@@ -499,12 +517,13 @@ static inline void audio_stream_writeback(struct audio_stream *buffer,
 	uint32_t tail_size = 0;
 
 	/* check for potential wrap */
-	if ((char *)buffer->w_ptr + bytes > (char *)buffer->end_addr) {
-		head_size = (char *)buffer->end_addr - (char *)buffer->w_ptr;
+	if ((char *)(*buffer->uncached_w_ptr) + bytes > (char *)buffer->end_addr) {
+		head_size = (char *)buffer->end_addr - (char *)(*buffer->uncached_w_ptr);
 		tail_size = bytes - head_size;
 	}
 
-	dcache_writeback_region(buffer->w_ptr, head_size);
+	dcache_writeback_region(*buffer->uncached_w_ptr, head_size);
+	platform_shared_commit(buffer->uncached_w_ptr, sizeof(void *));
 	if (tail_size)
 		dcache_writeback_region(buffer->addr, tail_size);
 }
@@ -556,10 +575,12 @@ static inline int audio_stream_copy(const struct audio_stream *source,
 				     uint32_t ooffset, uint32_t samples)
 {
 	int ssize = audio_stream_sample_bytes(source); /* src fmt == sink fmt */
-	void *src = audio_stream_wrap(source,
-				      (char *)source->r_ptr + ioffset * ssize);
-	void *snk = audio_stream_wrap(sink,
-				      (char *)sink->w_ptr + ooffset * ssize);
+	void *src = audio_stream_wrap(source, (char *)(*source->uncached_r_ptr) + ioffset * ssize);
+	void *snk = audio_stream_wrap(sink, (char *)(*sink->uncached_w_ptr) + ooffset * ssize);
+
+	platform_shared_commit(source->uncached_r_ptr, sizeof(void *));
+	platform_shared_commit(sink->uncached_w_ptr, sizeof(void *));
+
 	uint32_t bytes = samples * ssize;
 	uint32_t bytes_src;
 	uint32_t bytes_snk;

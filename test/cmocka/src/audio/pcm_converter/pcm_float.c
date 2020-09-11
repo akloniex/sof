@@ -20,6 +20,8 @@
 #include <stdint.h>
 #include <cmocka.h>
 
+#include "../../util.h"
+
 /* used during float assertions */
 #define EPSILON 0.01f
 
@@ -67,66 +69,39 @@ static void pcm_float_print_values(int32_t it, int32_t *fl, double ep,
 		      ep);
 }
 
-static struct audio_stream *create_test_buffer(enum sof_ipc_frame frame_frm,
-					       int size)
-{
-	struct audio_stream *buffer;
-
-	/* allocate new buffer */
-	buffer = malloc(sizeof(*buffer));
-	assert_non_null(buffer);
-
-	buffer->addr = malloc(size);
-	assert_non_null(buffer->addr);
-
-	audio_stream_init(buffer, buffer->addr, size, false);
-
-	buffer->frame_fmt = frame_frm;
-
-	return buffer;
-}
-
-static void free_test_buffer(struct audio_stream *buf)
-{
-	assert_non_null(buf);
-	assert_non_null(buf->addr);
-	free(buf->addr);
-	free(buf);
-}
-
-static struct audio_stream *_test_pcm_convert(enum sof_ipc_frame frm_in,
+static struct comp_buffer *_test_pcm_convert(enum sof_ipc_frame frm_in,
 					      enum sof_ipc_frame frm_out,
 					      int samples, const void *data)
 {
 	/* create buffers - output buffer may be too big for test */
-	struct audio_stream *source;
-	struct audio_stream *sink;
+	struct comp_buffer *source;
+	struct comp_buffer *sink;
 	pcm_converter_func fun;
 	const uint8_t fillval = 0xAB;
 	const int inbytes = samples * get_sample_bytes(frm_in);
 	const int outbytes = (samples + 1) * get_sample_bytes(frm_out);
 
 	/* create buffers */
-	source = create_test_buffer(frm_in, inbytes);
-	sink = create_test_buffer(frm_out, outbytes);
+	source = create_test_source(NULL, 0, frm_in, 1, inbytes);
+	sink = create_test_sink(NULL, 0, frm_out, 1, outbytes);
 
 	/* fill source */
-	memcpy(source->w_ptr, data, inbytes);
-	audio_stream_produce(source, inbytes);
+	memcpy(source->stream.w_ptr, data, inbytes);
+	audio_stream_produce(&source->stream, inbytes);
 
 	/* fill sink memory - to validate last value */
-	memset(sink->w_ptr, fillval, outbytes);
+	memset(sink->stream.w_ptr, fillval, outbytes);
 
 	/* run conversion */
 	fun = pcm_get_conversion_function(frm_in, frm_out);
 	assert_non_null(fun);
-	fun(source, 0, sink, 0, samples);
+	fun(&source->stream, 0, &sink->stream, 0, samples);
 
 	/* assert last value in sink is untouched */
-	assert_int_equal(((uint8_t *)sink->w_ptr)[outbytes - 1], fillval);
+	assert_int_equal(((uint8_t *)sink->stream.w_ptr)[outbytes - 1], fillval);
 
 	/* free source and return sink */
-	free_test_buffer(source);
+	free_test_source(source);
 	return sink;
 }
 
@@ -160,7 +135,7 @@ static void test_pcm_convert_s16_to_f(void **state)
 		INT16_MAX - 1, INT16_MAX,
 	};
 
-	struct audio_stream *sink;
+	struct comp_buffer *sink;
 	int i, N = ARRAY_SIZE(source_buf);
 	Tout *read_val;
 
@@ -173,7 +148,7 @@ static void test_pcm_convert_s16_to_f(void **state)
 
 	/* check results */
 	for (i = 0; i < N; ++i) {
-		read_val = audio_stream_read_frag(sink, i, sizeof(Tout));
+		read_val = audio_stream_read_frag(&sink->stream, i, sizeof(Tout));
 		print_message("%2d/%02d ", i + 1, N);
 		pcm_float_print_values(source_buf[i], (int32_t *)read_val,
 				       expected_buf[i], __func__);
@@ -181,7 +156,7 @@ static void test_pcm_convert_s16_to_f(void **state)
 	}
 
 	/* free memory */
-	free_test_buffer(sink);
+	free_test_sink(sink);
 }
 
 static void test_pcm_convert_f_to_s16(void **state)
@@ -199,7 +174,7 @@ static void test_pcm_convert_f_to_s16(void **state)
 		INT16_MAX - 1, INT16_MAX,
 	};
 
-	struct audio_stream *sink;
+	struct comp_buffer *sink;
 	int i, N = ARRAY_SIZE(source_buf);
 	Tout *read_val;
 
@@ -212,7 +187,7 @@ static void test_pcm_convert_f_to_s16(void **state)
 
 	/* check results */
 	for (i = 0; i < N; ++i) {
-		read_val = audio_stream_read_frag(sink, i, sizeof(Tout));
+		read_val = audio_stream_read_frag(&sink->stream, i, sizeof(Tout));
 		print_message("%2d/%02d ", i + 1, N);
 		pcm_float_print_values(*read_val, (int32_t *)&source_buf[i],
 				       (float)expected_buf[i], __func__);
@@ -220,7 +195,7 @@ static void test_pcm_convert_f_to_s16(void **state)
 	}
 
 	/* free memory */
-	free_test_buffer(sink);
+	free_test_sink(sink);
 }
 #endif /* CONFIG_FORMAT_FLOAT && CONFIG_FORMAT_S16LE */
 
@@ -244,7 +219,7 @@ static void test_pcm_convert_s24_in_s32_to_f(void **state)
 		INT24_MAX - 1, INT24_MAX,
 	};
 
-	struct audio_stream *sink;
+	struct comp_buffer *sink;
 	int i, N = ARRAY_SIZE(source_buf);
 	Tout *read_val;
 
@@ -257,7 +232,7 @@ static void test_pcm_convert_s24_in_s32_to_f(void **state)
 
 	/* check results */
 	for (i = 0; i < N; ++i) {
-		read_val = audio_stream_read_frag(sink, i, sizeof(Tout));
+		read_val = audio_stream_read_frag(&sink->stream, i, sizeof(Tout));
 		print_message("%2d/%02d ", i + 1, N);
 		pcm_float_print_values(source_buf[i], (int32_t *)read_val,
 				       expected_buf[i], __func__);
@@ -265,7 +240,7 @@ static void test_pcm_convert_s24_in_s32_to_f(void **state)
 	}
 
 	/* free memory */
-	free_test_buffer(sink);
+	free_test_sink(sink);
 }
 
 static void test_pcm_convert_s24_to_f(void **state)
@@ -287,7 +262,7 @@ static void test_pcm_convert_s24_to_f(void **state)
 		INT24_MAX - 1, INT24_MAX,
 	};
 
-	struct audio_stream *sink;
+	struct comp_buffer *sink;
 	int i, N = ARRAY_SIZE(source_buf);
 	Tout *read_val;
 
@@ -301,7 +276,7 @@ static void test_pcm_convert_s24_to_f(void **state)
 
 	/* check results */
 	for (i = 0; i < N; ++i) {
-		read_val = audio_stream_read_frag(sink, i, sizeof(Tout));
+		read_val = audio_stream_read_frag(&sink->stream, i, sizeof(Tout));
 		print_message("%2d/%02d ", i + 1, N);
 		pcm_float_print_values(sign_extend_s24(source_buf[i]),
 				       (int32_t *)read_val, expected_buf[i],
@@ -310,7 +285,7 @@ static void test_pcm_convert_s24_to_f(void **state)
 	}
 
 	/* free memory */
-	free_test_buffer(sink);
+	free_test_sink(sink);
 }
 
 static void test_pcm_convert_f_to_s24(void **state)
@@ -334,7 +309,7 @@ static void test_pcm_convert_f_to_s24(void **state)
 		INT24_MIN, INT24_MAX,
 	};
 
-	struct audio_stream *sink;
+	struct comp_buffer *sink;
 	int i, N = ARRAY_SIZE(source_buf);
 	Tout *read_val;
 
@@ -347,7 +322,7 @@ static void test_pcm_convert_f_to_s24(void **state)
 
 	/* check results */
 	for (i = 0; i < N; ++i) {
-		read_val = audio_stream_read_frag(sink, i, sizeof(Tout));
+		read_val = audio_stream_read_frag(&sink->stream, i, sizeof(Tout));
 		print_message("%2d/%02d ", i + 1, N);
 		pcm_float_print_values(*read_val, (int32_t *)&source_buf[i],
 				       (float)expected_buf[i], __func__);
@@ -355,7 +330,7 @@ static void test_pcm_convert_f_to_s24(void **state)
 	}
 
 	/* free memory */
-	free_test_buffer(sink);
+	free_test_sink(sink);
 }
 #endif /* CONFIG_FORMAT_FLOAT && CONFIG_FORMAT_S24LE */
 
@@ -385,7 +360,7 @@ static void test_pcm_convert_s32_to_f(void **state)
 		INT24_MAX*S24TOS32MULT, INT24_MAX * S24TOS32MULT,
 	};
 
-	struct audio_stream *sink;
+	struct comp_buffer *sink;
 	int i, N = ARRAY_SIZE(source_buf);
 	Tout *read_val;
 
@@ -398,7 +373,7 @@ static void test_pcm_convert_s32_to_f(void **state)
 
 	/* check results */
 	for (i = 0; i < N; ++i) {
-		read_val = audio_stream_read_frag(sink, i, sizeof(Tout));
+		read_val = audio_stream_read_frag(&sink->stream, i, sizeof(Tout));
 		print_message("%2d/%02d ", i + 1, N);
 		pcm_float_print_values(source_buf[i], (int32_t *)read_val,
 				       expected_buf[i], __func__);
@@ -406,7 +381,7 @@ static void test_pcm_convert_s32_to_f(void **state)
 	}
 
 	/* free memory */
-	free_test_buffer(sink);
+	free_test_sink(sink);
 }
 
 static void test_pcm_convert_f_to_s32(void **state)
@@ -428,7 +403,7 @@ static void test_pcm_convert_f_to_s32(void **state)
 		INT24_MAX - 1, INT24_MAX,
 	};
 
-	struct audio_stream *sink;
+	struct comp_buffer *sink;
 	int i, N = ARRAY_SIZE(source_buf);
 	Tout *read_val;
 
@@ -441,7 +416,7 @@ static void test_pcm_convert_f_to_s32(void **state)
 
 	/* check results */
 	for (i = 0; i < N; ++i) {
-		read_val = audio_stream_read_frag(sink, i, sizeof(Tout));
+		read_val = audio_stream_read_frag(&sink->stream, i, sizeof(Tout));
 		print_message("%2d/%02d ", i + 1, N);
 		pcm_float_print_values(*read_val, (int32_t *)&source_buf[i],
 				       (float)expected_buf[i], __func__);
@@ -449,7 +424,7 @@ static void test_pcm_convert_f_to_s32(void **state)
 	}
 
 	/* free memory */
-	free_test_buffer(sink);
+	free_test_sink(sink);
 }
 
 static void test_pcm_convert_f_to_s32_big_neg(void **state)
@@ -469,7 +444,7 @@ static void test_pcm_convert_f_to_s32_big_neg(void **state)
 		INT32_MIN
 	};
 
-	struct audio_stream *sink;
+	struct comp_buffer *sink;
 	int i, N = ARRAY_SIZE(source_buf);
 	Tout *read_val;
 
@@ -482,7 +457,7 @@ static void test_pcm_convert_f_to_s32_big_neg(void **state)
 
 	/* check results */
 	for (i = 0; i < N; ++i) {
-		read_val = audio_stream_read_frag(sink, i, sizeof(Tout));
+		read_val = audio_stream_read_frag(&sink->stream, i, sizeof(Tout));
 		print_message("%2d/%02d ", i + 1, N);
 		pcm_float_print_values(*read_val, (int32_t *)&source_buf[i],
 				       (float)expected_buf[i], __func__);
@@ -491,7 +466,7 @@ static void test_pcm_convert_f_to_s32_big_neg(void **state)
 	}
 
 	/* free memory */
-	free_test_buffer(sink);
+	free_test_sink(sink);
 }
 
 static void test_pcm_convert_f_to_s32_big_pos(void **state)
@@ -514,7 +489,7 @@ static void test_pcm_convert_f_to_s32_big_pos(void **state)
 		INT32_MAX,
 	};
 
-	struct audio_stream *sink;
+	struct comp_buffer *sink;
 	int i, N = ARRAY_SIZE(source_buf);
 	Tout *read_val;
 
@@ -527,7 +502,7 @@ static void test_pcm_convert_f_to_s32_big_pos(void **state)
 
 	/* check results */
 	for (i = 0; i < N; ++i) {
-		read_val = audio_stream_read_frag(sink, i, sizeof(Tout));
+		read_val = audio_stream_read_frag(&sink->stream, i, sizeof(Tout));
 		print_message("%2d/%02d ", i + 1, N);
 		pcm_float_print_values(*read_val, (int32_t *)&source_buf[i],
 				       (float)expected_buf[i], __func__);
@@ -536,7 +511,7 @@ static void test_pcm_convert_f_to_s32_big_pos(void **state)
 	}
 
 	/* free memory */
-	free_test_buffer(sink);
+	free_test_sink(sink);
 }
 #endif /* CONFIG_FORMAT_FLOAT && CONFIG_FORMAT_S32LE */
 

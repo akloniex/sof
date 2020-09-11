@@ -180,6 +180,24 @@ static inline void buffer_writeback(struct comp_buffer *buffer, uint32_t bytes)
 	audio_stream_writeback(&buffer->stream, bytes);
 }
 
+/* Invalidate control block of comp_buffer */
+static inline void buffer_control_invalidate(struct comp_buffer *buffer)
+{
+	if (!buffer->inter_core)
+		return;
+
+	dcache_invalidate_region(buffer, sizeof(*buffer));
+}
+
+/* Writback control block of comp_buffer */
+static inline void buffer_control_writeback(struct comp_buffer *buffer)
+{
+	if (!buffer->inter_core)
+		return;
+
+	dcache_writeback_region(buffer, sizeof(*buffer));
+}
+
 /**
  * Locks buffer instance for buffers connecting components
  * running on different cores. Buffer parameters will be invalidated
@@ -189,6 +207,7 @@ static inline void buffer_writeback(struct comp_buffer *buffer, uint32_t bytes)
  */
 static inline void buffer_lock(struct comp_buffer *buffer, uint32_t *flags)
 {
+	return;
 	if (!buffer->inter_core)
 		return;
 
@@ -208,6 +227,7 @@ static inline void buffer_lock(struct comp_buffer *buffer, uint32_t *flags)
  */
 static inline void buffer_unlock(struct comp_buffer *buffer, uint32_t flags)
 {
+	return;
 	if (!buffer->inter_core)
 		return;
 
@@ -291,6 +311,8 @@ static inline int buffer_set_params(struct comp_buffer *buffer,
 		buffer->chmap[i] = params->chmap[i];
 
 	buffer->hw_params_configured = true;
+
+	buffer_control_writeback(buffer);
 
 	return 0;
 }

@@ -327,6 +327,8 @@ int comp_verify_params(struct comp_dev *dev, uint32_t flag,
 
 		buffer_lock(buf, &flags);
 
+		buffer_control_invalidate(buf);
+
 		/* update specific pcm parameter with buffer parameter if
 		 * specific flag is set.
 		 */
